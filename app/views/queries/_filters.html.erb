@@ -1,0 +1,517 @@
+<%= javascript_tag do %>
+    var operatorLabels = <%= raw_json Query.operators_labels %>;
+    var operatorByType = <%= raw_json Query.operators_by_filter_type %>;
+    var availableFilters = <%= raw_json query.available_filters_as_json %>;
+    var labelDayPlural = <%= raw_json l(:label_day_plural) %>;
+    var allProjects = <%= raw_json query.all_projects_values %>;
+
+
+    <% if !@project.nil? and controller.controller_name == 'issues' %>
+    <%
+          principals = Principal.member_of_all(@project)
+          principals.uniq!
+          principals.sort!
+          users = principals.select {|p| p.is_a?(User)}
+          all_users = []
+          all_users << ["<< #{l(:label_me)} >>", "me"] if User.current.logged?
+          all_users += users.collect{|s| [s.name, s.id.to_s] }
+
+          available_version = []
+          @project.shared_versions.open.each { |ver| available_version << [ver.project.name + ' - ' + ver.name, ver.id.to_s] }
+          available_version = available_version.sort()
+    %>
+
+
+    var AllUsers = <%= raw_json all_users %>;
+
+    var availableVersions = <%= raw_json available_version %>;
+    var AllVersions = availableFilters['fixed_version_id']['values'];
+    var availableUsers = availableFilters['assigned_to_id']['values'];
+    availableFilters['fixed_version_id']['values'] = AllVersions;
+    availableFilters['assigned_to_id']['values'] = AllUsers;
+
+
+    function setCookie(c_name, value, exdays) {
+        var exdate = new Date();
+        exdate.setDate(exdate.getDate() + exdays);
+        var c_value = escape(value) + ((exdays == null) ? "" : "; expires=" + exdate.toUTCString());
+        document.cookie = c_name + "=" + c_value + ";path=/";
+    }
+
+    function getCookie(c_name) {
+        var i;
+        var x;
+        var y;
+        var ARRcookies = document.cookie.split(";");
+        for (i = 0; i < ARRcookies.length; i++) {
+            x = ARRcookies[i].substr(0, ARRcookies[i].indexOf("="));
+            y = ARRcookies[i].substr(ARRcookies[i].indexOf("=") + 1);
+            x = x.replace(/^\s+|\s+$/g, "");
+            if (x == c_name)
+                return unescape(y);
+        }
+    }
+    function change_available_versions()
+    {
+        if($("#available_versions").is(":checked")) {
+          setCookie('available_versions', 'open', 100);
+        }
+        else {
+          setCookie('available_versions', 'all', 100);
+
+        }
+    }
+    if(getCookie('available_versions') == 'open')
+    {
+      availableFilters['fixed_version_id']['values'] = availableVersions;
+      $("#available_versions").prop("checked", true);
+      setCookie('available_versions', 'open', 100);
+    }
+    else if(getCookie('available_versions') == 'all')
+    {
+      availableFilters['fixed_version_id']['values'] = AllVersions;
+      $("#available_versions").prop('checked', false);
+      setCookie('available_versions', 'all', 100);
+    }
+    else
+    {
+      setCookie('available_versions', 'open', 100);
+      $("#available_versions").prop('checked', true);
+      availableFilters['fixed_version_id']['values'] = availableVersions;
+    }
+
+    function change_available_users(id)
+    {
+        if($("#"+id).is(":checked")) {
+          setCookie(id, 'active', 100);
+        }
+        else {
+          setCookie(id, 'all', 100);
+
+        }
+    }
+    checkCookieUser('assigned_to_id', 'available_users');
+    checkCookieUser('author_id', 'available_author');
+    function checkCookieUser(filter, id) {
+        if(getCookie(id) == 'active')
+        {
+          availableFilters[filter]['values'] = availableUsers;
+          $("#"+id).prop("checked", true);
+          setCookie(id, 'active', 100);
+        }
+        else if(getCookie(id) == 'all')
+        {
+          availableFilters[filter]['values'] = AllUsers;
+          $("#"+id).prop('checked', false);
+          setCookie(id, 'all', 100);
+        }
+        else
+        {
+          setCookie(id, 'active', 100);
+          $("#"+id).prop('checked', true);
+          availableFilters[filter]['values'] = availableUsers;
+        }
+    }
+
+    function toggleOperator(field) {
+      var fieldId = field.replace('.', '_');
+      var operator = $("#operators_" + fieldId);
+      switch (operator.val()) {
+        case "!*":
+        case "*":
+        case "t":
+        case "ld":
+        case "w":
+        case "lw":
+        case "l2w":
+        case "m":
+        case "lm":
+        case "y":
+        case "o":
+        case "c":
+          enableValues(field, []);
+          break;
+        case "><":
+          enableValues(field, [0,1]);
+          break;
+        case "<t+":
+        case ">t+":
+        case "><t+":
+        case "t+":
+        case ">t-":
+        case "<t-":
+        case "><t-":
+        case "t-":
+          enableValues(field, [2]);
+          break;
+        case "=p":
+        case "=!p":
+        case "!p":
+          enableValues(field, [1]);
+          break;
+        default:
+          if(field == 'fixed_version_id' || field == 'assigned_to_id' || field == 'author_id')
+          {
+            enableValues(field, [0, 1]);
+          }
+          else
+          {
+            enableValues(field, [0]);
+          }
+          break;
+      }
+    }
+    function buildFilterRow(field, operator, values) {
+      var fieldId = field.replace('.', '_');
+      var filterTable = $("#filters-table");
+      var filterOptions = availableFilters[field];
+      var operators = operatorByType[filterOptions['type']];
+      var filterValues = filterOptions['values'];
+      var i, select;
+
+      var tr = $('<tr class="filter">').attr('id', 'tr_'+fieldId).html(
+        '<td class="field"><input checked="checked" id="cb_'+fieldId+'" name="f[]" value="'+field+'" type="checkbox"><label for="cb_'+fieldId+'"> '+filterOptions['name']+'</label></td>' +
+        '<td class="operator"><select id="operators_'+fieldId+'" name="op['+field+']"></td>' +
+        '<td class="values"></td>'
+      );
+      filterTable.append(tr);
+
+      select = tr.find('td.operator select');
+      for (i=0;i<operators.length;i++){
+        var option = $('<option>').val(operators[i]).text(operatorLabels[operators[i]]);
+        if (operators[i] == operator) { option.attr('selected', true); }
+        select.append(option);
+      }
+      select.change(function(){ toggleOperator(field); });
+
+      switch (filterOptions['type']){
+      case "list":
+      case "list_optional":
+      case "list_status":
+      case "list_subprojects":
+        tr.find('td.values').append(
+          '<span style="display:none;"><select class="value" id="values_'+fieldId+'_1" name="v['+field+'][]"></select>' +
+          ' <span class="toggle-multiselect">&nbsp;</span></span>'
+        );
+        select = tr.find('td.values select');
+        if (values.length > 1) { select.attr('multiple', true); }
+        for (i=0;i<filterValues.length;i++){
+          var filterValue = filterValues[i];
+          var option = $('<option>');
+          if ($.isArray(filterValue)) {
+            option.val(filterValue[1]).text(filterValue[0]);
+            if ($.inArray(filterValue[1], values) > -1) {option.attr('selected', true);}
+          } else {
+            option.val(filterValue).text(filterValue);
+            if ($.inArray(filterValue, values) > -1) {option.attr('selected', true);}
+          }
+          select.append(option);
+        }
+        switch (field) {
+          case 'fixed_version_id':
+            tr.find('td.values').append('<span style="display:none;">&nbsp;&nbsp;<input type="checkbox" id="available_versions" class="value" name="available_versions" value="open" onclick="change_available_versions();" />Opened versions</span>');
+            if(getCookie('available_versions') == 'open')
+            {
+              $("#available_versions").prop("checked", true);
+              setCookie('available_versions', 'open', 100);
+            }
+            else
+            {
+              $("#available_versions").prop('checked', false);
+              setCookie('available_versions', 'all', 100);
+            }
+            break;
+          case 'assigned_to_id':
+            tr.find('td.values').append('<span style="display:none;">&nbsp;&nbsp;<input type="checkbox" id="available_users" class="value" name="available_users" value="all" onclick="change_available_users(this.id);" />Active users</span>');
+            checkCookieUser('assigned_to_id', 'available_users');
+            break;
+          case 'author_id':
+            tr.find('td.values').append('<span style="display:none;">&nbsp;&nbsp;<input type="checkbox" id="available_author" class="value" name="available_author" value="all" onclick="change_available_users(this.id);" />Active users</span>');
+            checkCookieUser('author_id', 'available_author');
+            break;
+        }
+        break;
+      case "date":
+      case "date_past":
+        tr.find('td.values').append(
+          '<span style="display:none;"><input type="text" name="v['+field+'][]" id="values_'+fieldId+'_1" size="10" class="value date_value" /></span>' +
+          ' <span style="display:none;"><input type="text" name="v['+field+'][]" id="values_'+fieldId+'_2" size="10" class="value date_value" /></span>' +
+          ' <span style="display:none;"><input type="text" name="v['+field+'][]" id="values_'+fieldId+'" size="3" class="value" /> '+labelDayPlural+'</span>'
+        );
+        $('#values_'+fieldId+'_1').val(values[0]).datepicker(datepickerOptions);
+        $('#values_'+fieldId+'_2').val(values[1]).datepicker(datepickerOptions);
+        $('#values_'+fieldId).val(values[0]);
+        break;
+      case "string":
+      case "text":
+        tr.find('td.values').append(
+          '<span style="display:none;"><input type="text" name="v['+field+'][]" id="values_'+fieldId+'" size="30" class="value" /></span>'
+        );
+        $('#values_'+fieldId).val(values[0]);
+        break;
+      case "relation":
+        tr.find('td.values').append(
+          '<span style="display:none;"><input type="text" name="v['+field+'][]" id="values_'+fieldId+'" size="6" class="value" /></span>' +
+          '<span style="display:none;"><select class="value" name="v['+field+'][]" id="values_'+fieldId+'_1"></select></span>'
+        );
+        $('#values_'+fieldId).val(values[0]);
+        select = tr.find('td.values select');
+        for (i=0;i<allProjects.length;i++){
+          var filterValue = allProjects[i];
+          var option = $('<option>');
+          option.val(filterValue[1]).text(filterValue[0]);
+          if (values[0] == filterValue[1]) { option.attr('selected', true); }
+          select.append(option);
+        }
+      case "integer":
+      case "float":
+        tr.find('td.values').append(
+          '<span style="display:none;"><input type="text" name="v['+field+'][]" id="values_'+fieldId+'_1" size="6" class="value" /></span>' +
+          ' <span style="display:none;"><input type="text" name="v['+field+'][]" id="values_'+fieldId+'_2" size="6" class="value" /></span>'
+        );
+        $('#values_'+fieldId+'_1').val(values[0]);
+        $('#values_'+fieldId+'_2').val(values[1]);
+        break;
+      }
+    }
+    <% end %>
+    <% if @project.nil?  and controller.controller_name == 'issues' %>
+    <%
+      projects = Project.all
+      principals = Principal.member_of_all(projects)
+      principals.uniq!
+      principals.sort!
+      users = principals.select {|p| p.is_a?(User)}
+      all_users = []
+      all_users << ["<< #{l(:label_me)} >>", "me"] if User.current.logged?
+      all_users += users.collect{|s| [s.name, s.id.to_s] }
+
+   %>
+
+        var AllUsers = <%= raw_json all_users %>;
+        var availableUsers = availableFilters['assigned_to_id']['values'];
+
+        function setCookie(c_name, value, exdays) {
+            var exdate = new Date();
+            exdate.setDate(exdate.getDate() + exdays);
+            var c_value = escape(value) + ((exdays == null) ? "" : "; expires=" + exdate.toUTCString());
+            document.cookie = c_name + "=" + c_value + ";path=/";
+        }
+
+        function getCookie(c_name) {
+            var i;
+            var x;
+            var y;
+            var ARRcookies = document.cookie.split(";");
+            for (i = 0; i < ARRcookies.length; i++) {
+                x = ARRcookies[i].substr(0, ARRcookies[i].indexOf("="));
+                y = ARRcookies[i].substr(ARRcookies[i].indexOf("=") + 1);
+                x = x.replace(/^\s+|\s+$/g, "");
+                if (x == c_name)
+                    return unescape(y);
+            }
+        }
+
+        function change_available_users(id)
+        {
+            if($("#"+id).is(":checked")) {
+              setCookie(id, 'active', 100);
+            }
+            else {
+              setCookie(id, 'all', 100);
+
+            }
+        }
+        checkCookieUser('assigned_to_id', 'available_users');
+        checkCookieUser('author_id', 'available_author');
+        function checkCookieUser(filter, id) {
+            if(getCookie(id) == 'active')
+            {
+              availableFilters[filter]['values'] = availableUsers;
+              $("#"+id).prop("checked", true);
+              setCookie(id, 'active', 100);
+            }
+            else if(getCookie(id) == 'all')
+            {
+              availableFilters[filter]['values'] = AllUsers;
+              $("#"+id).prop('checked', false);
+              setCookie(id, 'all', 100);
+            }
+            else
+            {
+              setCookie(id, 'active', 100);
+              $("#"+id).prop('checked', true);
+              availableFilters[filter]['values'] = availableUsers;
+            }
+        }
+        function toggleOperator(field) {
+          var fieldId = field.replace('.', '_');
+          var operator = $("#operators_" + fieldId);
+          switch (operator.val()) {
+            case "!*":
+            case "*":
+            case "t":
+            case "ld":
+            case "w":
+            case "lw":
+            case "l2w":
+            case "m":
+            case "lm":
+            case "y":
+            case "o":
+            case "c":
+              enableValues(field, []);
+              break;
+            case "><":
+              enableValues(field, [0,1]);
+              break;
+            case "<t+":
+            case ">t+":
+            case "><t+":
+            case "t+":
+            case ">t-":
+            case "<t-":
+            case "><t-":
+            case "t-":
+              enableValues(field, [2]);
+              break;
+            case "=p":
+            case "=!p":
+            case "!p":
+              enableValues(field, [1]);
+              break;
+            default:
+              if(field == 'assigned_to_id' || field == 'author_id')
+              {
+                enableValues(field, [0, 1]);
+              }
+              else
+              {
+                enableValues(field, [0]);
+              }
+              break;
+          }
+        }
+        function buildFilterRow(field, operator, values) {
+          var fieldId = field.replace('.', '_');
+          var filterTable = $("#filters-table");
+          var filterOptions = availableFilters[field];
+          var operators = operatorByType[filterOptions['type']];
+          var filterValues = filterOptions['values'];
+          var i, select;
+
+          var tr = $('<tr class="filter">').attr('id', 'tr_'+fieldId).html(
+            '<td class="field"><input checked="checked" id="cb_'+fieldId+'" name="f[]" value="'+field+'" type="checkbox"><label for="cb_'+fieldId+'"> '+filterOptions['name']+'</label></td>' +
+            '<td class="operator"><select id="operators_'+fieldId+'" name="op['+field+']"></td>' +
+            '<td class="values"></td>'
+          );
+          filterTable.append(tr);
+
+          select = tr.find('td.operator select');
+          for (i=0;i<operators.length;i++){
+            var option = $('<option>').val(operators[i]).text(operatorLabels[operators[i]]);
+            if (operators[i] == operator) { option.attr('selected', true); }
+            select.append(option);
+          }
+          select.change(function(){ toggleOperator(field); });
+
+          switch (filterOptions['type']){
+          case "list":
+          case "list_optional":
+          case "list_status":
+          case "list_subprojects":
+            tr.find('td.values').append(
+              '<span style="display:none;"><select class="value" id="values_'+fieldId+'_1" name="v['+field+'][]"></select>' +
+              ' <span class="toggle-multiselect">&nbsp;</span></span>'
+            );
+            select = tr.find('td.values select');
+            if (values.length > 1) { select.attr('multiple', true); }
+            for (i=0;i<filterValues.length;i++){
+              var filterValue = filterValues[i];
+              var option = $('<option>');
+              if ($.isArray(filterValue)) {
+                option.val(filterValue[1]).text(filterValue[0]);
+                if ($.inArray(filterValue[1], values) > -1) {option.attr('selected', true);}
+              } else {
+                option.val(filterValue).text(filterValue);
+                if ($.inArray(filterValue, values) > -1) {option.attr('selected', true);}
+              }
+              select.append(option);
+            }
+            switch (field) {
+              case 'assigned_to_id':
+                tr.find('td.values').append('<span style="display:none;">&nbsp;&nbsp;<input type="checkbox" id="available_users" class="value" name="available_users" value="all" onclick="change_available_users(this.id);" />Active users</span>');
+                checkCookieUser('assigned_to_id', 'available_users');
+                break;
+              case 'author_id':
+                tr.find('td.values').append('<span style="display:none;">&nbsp;&nbsp;<input type="checkbox" id="available_author" class="value" name="available_author" value="all" onclick="change_available_users(this.id);" />Active users</span>');
+                checkCookieUser('author_id', 'available_author');
+                break;
+            }
+            break;
+          case "date":
+          case "date_past":
+            tr.find('td.values').append(
+              '<span style="display:none;"><input type="text" name="v['+field+'][]" id="values_'+fieldId+'_1" size="10" class="value date_value" /></span>' +
+              ' <span style="display:none;"><input type="text" name="v['+field+'][]" id="values_'+fieldId+'_2" size="10" class="value date_value" /></span>' +
+              ' <span style="display:none;"><input type="text" name="v['+field+'][]" id="values_'+fieldId+'" size="3" class="value" /> '+labelDayPlural+'</span>'
+            );
+            $('#values_'+fieldId+'_1').val(values[0]).datepicker(datepickerOptions);
+            $('#values_'+fieldId+'_2').val(values[1]).datepicker(datepickerOptions);
+            $('#values_'+fieldId).val(values[0]);
+            break;
+          case "string":
+          case "text":
+            tr.find('td.values').append(
+              '<span style="display:none;"><input type="text" name="v['+field+'][]" id="values_'+fieldId+'" size="30" class="value" /></span>'
+            );
+            $('#values_'+fieldId).val(values[0]);
+            break;
+          case "relation":
+            tr.find('td.values').append(
+              '<span style="display:none;"><input type="text" name="v['+field+'][]" id="values_'+fieldId+'" size="6" class="value" /></span>' +
+              '<span style="display:none;"><select class="value" name="v['+field+'][]" id="values_'+fieldId+'_1"></select></span>'
+            );
+            $('#values_'+fieldId).val(values[0]);
+            select = tr.find('td.values select');
+            for (i=0;i<allProjects.length;i++){
+              var filterValue = allProjects[i];
+              var option = $('<option>');
+              option.val(filterValue[1]).text(filterValue[0]);
+              if (values[0] == filterValue[1]) { option.attr('selected', true); }
+              select.append(option);
+            }
+          case "integer":
+          case "float":
+            tr.find('td.values').append(
+              '<span style="display:none;"><input type="text" name="v['+field+'][]" id="values_'+fieldId+'_1" size="6" class="value" /></span>' +
+              ' <span style="display:none;"><input type="text" name="v['+field+'][]" id="values_'+fieldId+'_2" size="6" class="value" /></span>'
+            );
+            $('#values_'+fieldId+'_1').val(values[0]);
+            $('#values_'+fieldId+'_2').val(values[1]);
+            break;
+          }
+        }
+    <% end %>
+    $(document).ready(function(){
+        initFilters();
+        <% query.filters.each do |field, options| %>
+            addFilter("<%= field %>", <%= raw_json query.operator_for(field) %>, <%= raw_json query.values_for(field) %>);
+        <% end %>
+    });
+<% end %>
+
+<table style="width:100%">
+<tr>
+<td>
+<table id="filters-table">
+</table>
+</td>
+<td class="add-filter">
+<%= label_tag('add_filter_select', l(:label_filter_add)) %>
+<%= select_tag 'add_filter_select', filters_options_for_select(query), :name => nil %>
+</td>
+</tr>
+</table>
+<%= hidden_field_tag 'f[]', '' %>
+<% include_calendar_headers_tags %>
